@@ -1,0 +1,14 @@
+name: Reconcile fleet
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /reconcile
+        run: |
+          curl -sS -f -X POST https://api.maritime.sh/a/22642663-1f2d-4765-aa9e-363ddccfbd5d/reconcile
