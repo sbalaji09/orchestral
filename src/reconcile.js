@@ -168,6 +168,7 @@ async function reconcilePass() {
   }
 
   const summary = report.buildSummary(results, mode);
+  const narration = await report.narrate(summary);
 
   lastState = {
     ok: true,
@@ -175,6 +176,7 @@ async function reconcilePass() {
     mode,
     results,
     summary,
+    narration,
   };
 
   return lastState;

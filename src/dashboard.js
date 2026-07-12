@@ -66,7 +66,7 @@ function renderDashboard(state) {
     `, { mode: state.mode, timestamp: state.timestamp });
   }
 
-  const { results, summary, mode, timestamp } = state;
+  const { results, summary, mode, timestamp, narration } = state;
 
   const rows = results.length
     ? results.map(renderRow).join('\n')
@@ -95,6 +95,11 @@ function renderDashboard(state) {
 
   const body = `
     <section class="stat-row">${stats}</section>
+
+    ${narration ? `<section class="card narration-card">
+      <div class="card-header"><h2>Incident note</h2><span class="muted">AI-generated, describes decisions already made</span></div>
+      <p class="narration-text">${esc(narration)}</p>
+    </section>` : ''}
 
     <section class="card">
       <div class="card-header">
@@ -201,6 +206,8 @@ function page(body, ctx) {
   .stat-label { font-size: 0.78rem; color: var(--muted-foreground); margin-bottom: 0.5rem; }
   .stat-value { font-size: 1.9rem; font-weight: 600; letter-spacing: -0.02em; }
   .stat-sub { font-size: 0.75rem; color: var(--muted-foreground); margin-top: 0.35rem; }
+  .narration-card { border-color: var(--brand); }
+  .narration-text { margin: 0; font-size: 0.92rem; line-height: 1.5; }
   .card {
     background: var(--surface-1);
     border: 1px solid var(--border);

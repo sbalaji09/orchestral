@@ -44,13 +44,46 @@ function buildSummary(results, mode) {
   };
 }
 
-// Turns the structured summary into human-readable prose. Deferred by the
-// build order — only activates once ANTHROPIC_API_KEY is set and this is
-// implemented; until then it's a no-op so /reconcile always has a
-// structured summary to fall back on.
+// Turns the structured summary into a short human-readable incident note.
+// Uses Maritime's own injected OpenAI-compatible LLM proxy (OPENAI_API_KEY /
+// OPENAI_BASE_URL, present on every Maritime agent) rather than requiring a
+// separate ANTHROPIC_API_KEY. Purely descriptive — this runs after decide()
+// has already produced every action; it narrates decisions, it never makes
+// them. Returns null on any failure or if nothing notable happened, so
+// /reconcile always has the structured summary to fall back on.
 async function narrate(summary) {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
-  return null;
+  const apiKey = process.env.OPENAI_API_KEY;
+  const baseUrl = process.env.OPENAI_BASE_URL;
+  if (!apiKey || !baseUrl) return null;
+
+  const noteworthy = summary.incidents.length || summary.costLeaks.length || summary.actionsTaken.length;
+  if (!noteworthy) return null;
+
+  const prompt = `You are writing a one-paragraph incident note for an ops dashboard. Mode: ${summary.mode}. ` +
+    `${summary.incidents.length} incident(s), ${summary.costLeaks.length} cost leak(s), ${summary.actionsTaken.length} action(s) taken. ` +
+    `Incidents: ${JSON.stringify(summary.incidents.map((r) => ({ name: r.name, status: r.status, action: r.decision.action })))}. ` +
+    `Actions taken: ${JSON.stringify(summary.actionsTaken.map((r) => ({ name: r.name, action: r.decision.action })))}. ` +
+    `Be factual and terse — state what was observed and what was done, nothing speculative. Two sentences max.`;
+
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: 'You summarize fleet-ops reconciliation results factually and tersely. Never invent data not given to you.' },
+          { role: 'user', content: prompt },
+        ],
+        max_tokens: 150,
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 // Sends the digest via the agent's Maritime email identity. Deferred by the
