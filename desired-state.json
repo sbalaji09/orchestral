@@ -1,4 +1,8 @@
 {
-  "managed_agents": [],
+  "managed_agents": [
+    { "name": "support-triage", "expected_tier": "smart" },
+    { "name": "invoice-reconciler", "expected_tier": "smart" },
+    { "name": "lead-enricher", "expected_tier": "smart" }
+  ],
   "ignore": ["fleet-control-plane"]
 }
