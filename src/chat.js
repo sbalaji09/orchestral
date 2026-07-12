@@ -2,6 +2,7 @@ const reconcile = require('./reconcile');
 const report = require('./report');
 
 const REMEDIATE_TOOL_NAME = 'remediate_agent';
+const START_TOOL_NAME = 'start_agent';
 
 function summarizeAgent({ agent, health }) {
   const price = report.TIER_PRICE_CENTS[agent.tier];
@@ -35,9 +36,11 @@ Controller mode: ${mode} ${mode !== 'enforce' ? '(dry run — remediation reques
 
 Rules:
 - Answer informational questions directly and factually using only the fleet state above. Don't invent data.
-- If the user asks you to fix, restart, heal, or remediate a specific agent, call ${REMEDIATE_TOOL_NAME} with that agent's exact name. You are proposing remediation, not deciding the outcome — a separate deterministic policy layer decides whether any action is actually allowed or executed (dry-run mode, restart caps, and other guardrails all apply regardless of what you request). Do not claim an action succeeded — the tool result will tell you what actually happened, and you should report that faithfully in your next reply.
-- Never claim you can restart, scale, or delete anything directly — you can only request remediation via the tool.
-- If asked to act on the fleet-control-plane agent itself, or on an agent not listed above, explain that it's out of scope rather than calling the tool.`;
+- If the user asks you to fix, restart, heal, or remediate a specific agent that has a problem, call ${REMEDIATE_TOOL_NAME} with that agent's exact name. A sleeping agent is healthy, not broken — don't call this for a sleeping agent, use ${START_TOOL_NAME} instead if the user wants it running.
+- If the user asks you to start, wake up, or turn on a specific agent that is currently sleeping or stopped, call ${START_TOOL_NAME} with that agent's exact name.
+- Both tools only propose an action — a separate deterministic policy layer decides whether it's actually allowed or executed (dry-run mode, restart caps, and other guardrails all apply regardless of what you request). Do not claim an action succeeded — the tool result will tell you what actually happened, and you should report that faithfully in your next reply.
+- Never claim you can restart, scale, start, or delete anything directly — you can only request it via a tool.
+- If asked to act on the fleet-control-plane agent itself, or on an agent not listed above, explain that it's out of scope rather than calling a tool.`;
 }
 
 function buildTools(senseState) {
@@ -48,11 +51,25 @@ function buildTools(senseState) {
       type: 'function',
       function: {
         name: REMEDIATE_TOOL_NAME,
-        description: 'Request remediation for one managed agent. A deterministic policy layer decides the actual action (or none) and whether it executes.',
+        description: 'Request remediation for one managed agent that has a problem (errored, crashed, stopped unexpectedly). A deterministic policy layer decides the actual action (or none) and whether it executes.',
         parameters: {
           type: 'object',
           properties: {
             agentName: { type: 'string', enum: agentNames, description: 'Exact name of the agent to remediate.' },
+          },
+          required: ['agentName'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: START_TOOL_NAME,
+        description: 'Request starting a sleeping or stopped agent that the user wants running right now. Only makes sense for agents that are currently sleeping or stopped.',
+        parameters: {
+          type: 'object',
+          properties: {
+            agentName: { type: 'string', enum: agentNames, description: 'Exact name of the agent to start.' },
           },
           required: ['agentName'],
         },
@@ -79,6 +96,22 @@ function describeOutcome(result) {
     return `${name} was classified ${health}, decision was ${decision.action}, but execution failed: ${actionResult.error}.`;
   }
   return `${name} was classified ${health}; decision was ${decision.action} (not executed).`;
+}
+
+function describeStartOutcome(name, result) {
+  if (result.executed) {
+    return `${name} was sleeping/stopped — start was executed, it should be active shortly.`;
+  }
+  if (result.skippedReason === 'RECONCILE_MODE is not enforce') {
+    return `${name} is sleeping/stopped and would be started, but RECONCILE_MODE is report — this is a dry run, nothing was executed.`;
+  }
+  if (result.skippedReason) {
+    return `Didn't start ${name}: it's ${result.skippedReason.replace('already ', '')} already.`;
+  }
+  if (result.error) {
+    return `Tried to start ${name}, but it failed: ${result.error}.`;
+  }
+  return `${name}: start was not executed.`;
 }
 
 async function callLLM(messages, tools) {
@@ -117,20 +150,25 @@ async function handleChatMessage(userMessage) {
     return choice?.message?.content?.trim() || "I don't have a response for that.";
   }
 
-  // Only one tool is exposed and it only takes an agent name, so handle the
-  // first call; extra calls in the same turn are ignored rather than
-  // executing multiple remediations from one ambiguous request.
+  // Both tools take only an agent name, so handle the first call in this
+  // turn; extra calls are ignored rather than executing multiple actions
+  // from one ambiguous request.
   const call = toolCalls[0];
   let agentName;
   try {
     agentName = JSON.parse(call.function.arguments).agentName;
   } catch {
-    return "I tried to request remediation but couldn't parse which agent you meant.";
+    return "I tried to request that but couldn't parse which agent you meant.";
   }
 
   const target = senseState.results.find((r) => r.agent.name === agentName);
   if (!target) {
-    return `I can't remediate "${agentName}" — it's not a managed agent I have visibility into.`;
+    return `I can't act on "${agentName}" — it's not a managed agent I have visibility into.`;
+  }
+
+  if (call.function.name === START_TOOL_NAME) {
+    const result = await reconcile.startAgent(target.agent, mode);
+    return describeStartOutcome(agentName, result);
   }
 
   const result = await reconcile.evaluateAndAct(target.agent, thresholds, restartWindowMinutes, mode);

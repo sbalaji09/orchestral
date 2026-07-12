@@ -86,6 +86,10 @@ function restart(agentName) {
   return runMaritime(['restart', agentName]);
 }
 
+function start(agentName) {
+  return runMaritime(['start', agentName]);
+}
+
 function scale(agentName, tier) {
   return runMaritime(['scale', agentName, tier]);
 }
@@ -103,6 +107,7 @@ module.exports = {
   logs,
   history,
   restart,
+  start,
   scale,
   sleep,
 };

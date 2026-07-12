@@ -320,6 +320,31 @@ function page(body, ctx) {
         return el;
       }
 
+      var WAKE_RETRY_ATTEMPTS = 8;
+      var WAKE_RETRY_DELAY_MS = 2500;
+
+      function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+      // The controller itself runs on a sleep-when-idle tier, so the first
+      // request after a period of inactivity can hit the gateway mid-wake
+      // (503, "Agent is starting or asleep"). Retry through that instead of
+      // surfacing it as a chat failure.
+      function postChatWithRetry(message, pending, attemptsLeft) {
+        return fetch(apiUrl('chat'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message, source: 'dashboard' }),
+        }).then(function (res) {
+          if (res.status === 503 && attemptsLeft > 0) {
+            pending.textContent = 'waking up the control plane…';
+            return sleep(WAKE_RETRY_DELAY_MS).then(function () {
+              return postChatWithRetry(message, pending, attemptsLeft - 1);
+            });
+          }
+          return res.text().then(function (text) { return { ok: res.ok, text: text }; });
+        });
+      }
+
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         pauseAutoRefresh();
@@ -331,14 +356,7 @@ function page(body, ctx) {
         button.disabled = true;
         var pending = addMessage('assistant pending', 'thinking…');
 
-        fetch(apiUrl('chat'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ message: message, source: 'dashboard' }),
-        })
-          .then(function (res) {
-            return res.text().then(function (text) { return { ok: res.ok, text: text }; });
-          })
+        postChatWithRetry(message, pending, WAKE_RETRY_ATTEMPTS)
           .then(function (result) {
             pending.textContent = result.text;
             pending.className = result.ok ? 'chat-msg assistant' : 'chat-msg assistant error';

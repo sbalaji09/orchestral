@@ -122,6 +122,29 @@ async function act(agent, decision, mode) {
   return { executed: false, action: decision.action };
 }
 
+// Explicit "start" for a sleeping/stopped agent — distinct from act() because
+// policy.decide() never proposes waking a sleeping agent automatically
+// (sleeping is deliberately healthy). This is a direct, user-requested
+// override, not an automatic remediation, but it still goes through the same
+// enforce-mode gate as every other mutation, and `agent` only ever comes from
+// sense()'s already-self-filtered list, so it can't target the controller.
+async function startAgent(agent, mode) {
+  if (agent.status !== 'sleeping' && agent.status !== 'stopped') {
+    return { executed: false, action: 'START', skippedReason: `already ${agent.status}` };
+  }
+
+  if (mode !== 'enforce') {
+    return { executed: false, action: 'START', skippedReason: 'RECONCILE_MODE is not enforce' };
+  }
+
+  try {
+    await maritime.start(agent.name);
+    return { executed: true, action: 'START' };
+  } catch (err) {
+    return { executed: false, action: 'START', error: err.message };
+  }
+}
+
 function getConfig() {
   const mode = process.env.RECONCILE_MODE || 'report';
   return {
@@ -238,5 +261,6 @@ module.exports = {
   getLastState,
   senseAndClassify,
   evaluateAndAct,
+  startAgent,
   getConfig,
 };
