@@ -1,7 +1,7 @@
 const http = require('http');
-const fs = require('fs');
 const reconcile = require('./reconcile');
 const dashboard = require('./dashboard');
+const chat = require('./chat');
 
 const PORT = process.env.PORT || 8080;
 const BACKSTOP_INTERVAL_MS = 5 * 60 * 1000;
@@ -12,17 +12,17 @@ function sendJson(res, statusCode, body) {
   res.end(payload);
 }
 
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-
-  if (process.env.DEBUG_LOG_REQUESTS === '1') {
+function readBody(req) {
+  return new Promise((resolve, reject) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      const line = `${new Date().toISOString()} ${req.method} ${url.pathname} headers=${JSON.stringify(req.headers)} body=${Buffer.concat(chunks).toString('utf8')}\n`;
-      try { fs.appendFileSync('/tmp/debug-requests.log', line); } catch {}
-    });
-  }
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (req.method === 'GET' && url.pathname === '/health') {
     sendJson(res, 200, { ok: true });
@@ -38,6 +38,35 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/reconcile') {
     const state = await reconcile.reconcilePassSafe();
     sendJson(res, state.ok ? 200 : 500, state);
+    return;
+  }
+
+  // Maritime's native chat channel POSTs here with {message, source}. It
+  // expects the reply as the raw response body text (wrapped as {response}
+  // by the CLI), not a JSON envelope — so this returns plain text.
+  if (req.method === 'POST' && url.pathname === '/chat') {
+    let message;
+    try {
+      const body = await readBody(req);
+      message = JSON.parse(body).message;
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Could not parse chat message.');
+      return;
+    }
+    if (!message || typeof message !== 'string') {
+      res.writeHead(400, { 'Content-Type': 'text/plain' });
+      res.end('Missing "message" field.');
+      return;
+    }
+    try {
+      const reply = await chat.handleChatMessage(message);
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(reply);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'text/plain' });
+      res.end(`Chat handler error: ${err.message}`);
+    }
     return;
   }
 

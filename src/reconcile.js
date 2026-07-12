@@ -122,15 +122,58 @@ async function act(agent, decision, mode) {
   return { executed: false, action: decision.action };
 }
 
-async function reconcilePass() {
+function getConfig() {
   const mode = process.env.RECONCILE_MODE || 'report';
-  const thresholds = {
+  return {
     mode,
-    idleMinutesThreshold: Number(process.env.IDLE_MINUTES_THRESHOLD || 60),
-    maxRestartsPerWindow: Number(process.env.MAX_RESTARTS_PER_WINDOW || 3),
-    costLeakAction: 'alert',
+    thresholds: {
+      mode,
+      idleMinutesThreshold: Number(process.env.IDLE_MINUTES_THRESHOLD || 60),
+      maxRestartsPerWindow: Number(process.env.MAX_RESTARTS_PER_WINDOW || 3),
+      costLeakAction: 'alert',
+    },
+    restartWindowMinutes: Number(process.env.RESTART_WINDOW_MINUTES || 30),
   };
-  const restartWindowMinutes = Number(process.env.RESTART_WINDOW_MINUTES || 30);
+}
+
+// classify -> decide -> act for one agent. This is THE mutation path — used
+// by both the automatic reconcile loop and the chat handler, so a chat-
+// requested "restart X" is decided and executed identically to an automatic
+// pass, with the same guardrails (dry-run unless enforce, restart cap,
+// never-self since `agent` only ever comes from sense()'s already-filtered
+// list).
+async function evaluateAndAct(agent, thresholds, restartWindowMinutes, mode) {
+  const health = policy.classify(agent, agent.logs, agent.history, thresholds);
+  const restartCount = getRestartCount(agent.name, restartWindowMinutes);
+  const decision = policy.decide(health, restartCount, thresholds);
+  const actionResult = await act(agent, decision, mode);
+  return {
+    name: agent.name,
+    status: agent.status,
+    tier: agent.tier,
+    desiredTier: agent.desiredTier,
+    lastActiveAt: agent.lastActiveAt,
+    health,
+    decision,
+    actionResult,
+  };
+}
+
+// Sense + classify only, no decide/act — a side-effect-free fleet snapshot
+// for read-only callers (the chat handler's "what's wrong" questions).
+async function senseAndClassify() {
+  const { thresholds } = getConfig();
+  const desiredState = loadDesiredState();
+  const { enriched, missing } = await sense(desiredState);
+  const results = enriched.map((agent) => ({
+    agent,
+    health: policy.classify(agent, agent.logs, agent.history, thresholds),
+  }));
+  return { results, missing };
+}
+
+async function reconcilePass() {
+  const { mode, thresholds, restartWindowMinutes } = getConfig();
 
   const desiredState = loadDesiredState();
   const { enriched, missing } = await sense(desiredState);
@@ -138,20 +181,7 @@ async function reconcilePass() {
   const results = [];
 
   for (const agent of enriched) {
-    const health = policy.classify(agent, agent.logs, agent.history, thresholds);
-    const restartCount = getRestartCount(agent.name, restartWindowMinutes);
-    const decision = policy.decide(health, restartCount, thresholds);
-    const actionResult = await act(agent, decision, mode);
-    results.push({
-      name: agent.name,
-      status: agent.status,
-      tier: agent.tier,
-      desiredTier: agent.desiredTier,
-      lastActiveAt: agent.lastActiveAt,
-      health,
-      decision,
-      actionResult,
-    });
+    results.push(await evaluateAndAct(agent, thresholds, restartWindowMinutes, mode));
   }
 
   for (const d of missing) {
@@ -202,4 +232,11 @@ function getLastState() {
   return lastState;
 }
 
-module.exports = { reconcilePass, reconcilePassSafe, getLastState };
+module.exports = {
+  reconcilePass,
+  reconcilePassSafe,
+  getLastState,
+  senseAndClassify,
+  evaluateAndAct,
+  getConfig,
+};
