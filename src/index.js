@@ -14,6 +14,14 @@ function sendJson(res, statusCode, body) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  if (process.env.DEBUG_LOG_REQUESTS === '1') {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      console.log(`[debug-request] ${req.method} ${url.pathname} headers=${JSON.stringify(req.headers)} body=${Buffer.concat(chunks).toString('utf8')}`);
+    });
+  }
+
   if (req.method === 'GET' && url.pathname === '/health') {
     sendJson(res, 200, { ok: true });
     return;
