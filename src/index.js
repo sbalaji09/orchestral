@@ -1,4 +1,5 @@
 const http = require('http');
+const fs = require('fs');
 const reconcile = require('./reconcile');
 const dashboard = require('./dashboard');
 
@@ -18,7 +19,8 @@ const server = http.createServer(async (req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
-      console.log(`[debug-request] ${req.method} ${url.pathname} headers=${JSON.stringify(req.headers)} body=${Buffer.concat(chunks).toString('utf8')}`);
+      const line = `${new Date().toISOString()} ${req.method} ${url.pathname} headers=${JSON.stringify(req.headers)} body=${Buffer.concat(chunks).toString('utf8')}\n`;
+      try { fs.appendFileSync('/tmp/debug-requests.log', line); } catch {}
     });
   }
 
