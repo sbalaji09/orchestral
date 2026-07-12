@@ -62,6 +62,16 @@ async function sense(desiredState) {
       ]);
       agentLogs = logsResult.status === 'fulfilled' && Array.isArray(logsResult.value) ? logsResult.value : [];
       agentHistory = historyResult.status === 'fulfilled' && Array.isArray(historyResult.value) ? historyResult.value : [];
+
+      // Deploy-time error logs from a build attempt that was since superseded
+      // by a successful deploy shouldn't count as an ongoing incident.
+      const lastDeployCompletedAt = agentHistory[0]?.completedAt ? new Date(agentHistory[0].completedAt).getTime() : null;
+      if (lastDeployCompletedAt) {
+        agentLogs = agentLogs.filter((entry) => {
+          const t = new Date(entry.timestamp).getTime();
+          return Number.isNaN(t) || t > lastDeployCompletedAt;
+        });
+      }
     }
 
     enriched.push({
