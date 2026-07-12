@@ -32,6 +32,11 @@ test('classify: failed last deploy is INCIDENT even if status looks active', () 
   assert.equal(classify(agent, [], [{ status: 'failed' }]), HEALTH.INCIDENT);
 });
 
+test('classify: stopped is INCIDENT, not OK or OK_SLEEPING', () => {
+  const agent = { name: 'a', status: 'stopped', tier: 'smart', managed: true, desiredTier: 'smart' };
+  assert.equal(classify(agent, [], []), HEALTH.INCIDENT);
+});
+
 test('classify: tier mismatch is DRIFT_TIER', () => {
   const agent = { name: 'a', status: 'active', tier: 'extended', managed: true, desiredTier: 'smart' };
   assert.equal(classify(agent, [], []), HEALTH.DRIFT_TIER);

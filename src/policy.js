@@ -62,7 +62,10 @@ function classify(agent, logs = [], history = [], thresholds = {}) {
   const hasErrorLogs = Array.isArray(logs) && logs.length > 0;
   const lastDeployFailed = Array.isArray(history) && history.length > 0 && historyEntryFailed(history[0]);
 
-  if (agent.status === 'error' || agent.status === 'crashed' || hasErrorLogs || lastDeployFailed) {
+  // 'stopped' isn't sleeping (which is a deliberate, healthy, cost-saving
+  // state) and isn't running either — an unexpectedly stopped managed agent
+  // is exactly the case restart is meant to fix.
+  if (agent.status === 'error' || agent.status === 'crashed' || agent.status === 'stopped' || hasErrorLogs || lastDeployFailed) {
     return HEALTH.INCIDENT;
   }
 
