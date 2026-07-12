@@ -96,6 +96,18 @@ function renderDashboard(state) {
   const body = `
     <section class="stat-row">${stats}</section>
 
+    <section class="card chat-card">
+      <div class="card-header">
+        <h2>Ask the control plane</h2>
+        <span class="muted">Goes through the same guarded executor as automatic reconciliation</span>
+      </div>
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="e.g. what's wrong with the fleet? / restart lead-enricher" autocomplete="off" />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
     ${narration ? `<section class="card narration-card">
       <div class="card-header"><h2>Incident note</h2><span class="muted">AI-generated, describes decisions already made</span></div>
       <p class="narration-text">${esc(narration)}</p>
@@ -141,7 +153,6 @@ function page(body, ctx) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Fleet Control Plane</title>
-<meta http-equiv="refresh" content="30">
 <style>
   :root {
     --background: #ffffff;
@@ -245,6 +256,25 @@ function page(body, ctx) {
   .incident-name { font-weight: 500; }
   .spend-list li { justify-content: space-between; }
   .spend-amount { font-weight: 500; margin-left: auto; }
+  .chat-card { border-color: var(--brand); }
+  .chat-log { display: flex; flex-direction: column; gap: 0.6rem; margin-bottom: 0.9rem; max-height: 16rem; overflow-y: auto; }
+  .chat-log:empty { display: none; }
+  .chat-msg { padding: 0.55rem 0.8rem; border-radius: 0.6rem; font-size: 0.88rem; line-height: 1.45; max-width: 85%; white-space: pre-wrap; }
+  .chat-msg.user { align-self: flex-end; background: var(--brand); color: #fff; }
+  .chat-msg.assistant { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--border); }
+  .chat-msg.pending { color: var(--muted-foreground); font-style: italic; }
+  .chat-msg.error { background: var(--incident-bg); color: var(--incident-fg); border: none; }
+  .chat-form { display: flex; gap: 0.6rem; }
+  .chat-form input {
+    flex: 1; padding: 0.55rem 0.8rem; border-radius: 0.6rem; border: 1px solid var(--border);
+    background: var(--background); color: var(--foreground); font-size: 0.88rem; font-family: inherit;
+  }
+  .chat-form input:focus { outline: 2px solid var(--brand); outline-offset: -1px; }
+  .chat-form button {
+    padding: 0.55rem 1.1rem; border-radius: 0.6rem; border: none; background: var(--brand);
+    color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  }
+  .chat-form button:disabled { opacity: 0.6; cursor: default; }
 </style>
 </head>
 <body>
@@ -259,6 +289,62 @@ function page(body, ctx) {
     <p class="lede">Self-healing, cost-aware reconciliation for your Maritime fleet.${ctx?.mode && ctx.mode !== 'enforce' ? ' Dry run — no remediation is executed.' : ''}</p>
     ${body}
   </main>
+  <script>
+    (function () {
+      var REFRESH_MS = 30000;
+      var refreshTimer = setTimeout(function () { location.reload(); }, REFRESH_MS);
+      function pauseAutoRefresh() { clearTimeout(refreshTimer); }
+
+      var form = document.getElementById('chat-form');
+      if (!form) return;
+      var input = document.getElementById('chat-input');
+      var log = document.getElementById('chat-log');
+      var button = form.querySelector('button');
+
+      function addMessage(role, text) {
+        var el = document.createElement('div');
+        el.className = 'chat-msg ' + role;
+        el.textContent = text;
+        log.appendChild(el);
+        log.scrollTop = log.scrollHeight;
+        return el;
+      }
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        pauseAutoRefresh();
+        var message = input.value.trim();
+        if (!message) return;
+        addMessage('user', message);
+        input.value = '';
+        input.disabled = true;
+        button.disabled = true;
+        var pending = addMessage('assistant pending', 'thinking…');
+
+        fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: message, source: 'dashboard' }),
+        })
+          .then(function (res) {
+            return res.text().then(function (text) { return { ok: res.ok, text: text }; });
+          })
+          .then(function (result) {
+            pending.textContent = result.text;
+            pending.className = result.ok ? 'chat-msg assistant' : 'chat-msg assistant error';
+          })
+          .catch(function (err) {
+            pending.textContent = 'Request failed: ' + err.message;
+            pending.className = 'chat-msg assistant error';
+          })
+          .finally(function () {
+            input.disabled = false;
+            button.disabled = false;
+            input.focus();
+          });
+      });
+    })();
+  </script>
 </body>
 </html>`;
 }
