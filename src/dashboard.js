@@ -301,6 +301,16 @@ function page(body, ctx) {
       var log = document.getElementById('chat-log');
       var button = form.querySelector('button');
 
+      // The public URL is served behind a path prefix (e.g. /a/<id>/) that
+      // Maritime's gateway strips before forwarding to this container — our
+      // server only ever sees "/chat". But a fetch('/chat') from the browser
+      // resolves against the domain root, bypassing that prefix and missing
+      // the gateway entirely. Resolve relative to the current page path instead.
+      function apiUrl(relativePath) {
+        var base = location.pathname.endsWith('/') ? location.pathname : location.pathname + '/';
+        return base + relativePath;
+      }
+
       function addMessage(role, text) {
         var el = document.createElement('div');
         el.className = 'chat-msg ' + role;
@@ -321,7 +331,7 @@ function page(body, ctx) {
         button.disabled = true;
         var pending = addMessage('assistant pending', 'thinking…');
 
-        fetch('/chat', {
+        fetch(apiUrl('chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: message, source: 'dashboard' }),
