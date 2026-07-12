@@ -1,9 +1,12 @@
 const reconcile = require('./reconcile');
+const report = require('./report');
 
 const REMEDIATE_TOOL_NAME = 'remediate_agent';
 
 function summarizeAgent({ agent, health }) {
+  const price = report.TIER_PRICE_CENTS[agent.tier];
   const parts = [`${agent.name}: status=${agent.status}, tier=${agent.tier}, health=${health}`];
+  if (price != null) parts.push(`est_cost=$${(price / 100).toFixed(2)}/mo`);
   if (agent.desiredTier && agent.desiredTier !== agent.tier) parts.push(`desired_tier=${agent.desiredTier}`);
   if (agent.logs?.length) {
     const messages = agent.logs.slice(0, 3).map((l) => l.message).join(' | ');
@@ -18,12 +21,15 @@ function summarizeAgent({ agent, health }) {
 function buildSystemPrompt(senseState, mode) {
   const fleetLines = senseState.results.map(summarizeAgent).join('\n');
   const missingLines = senseState.missing.map((d) => `${d.name}: MISSING from fleet (expected tier ${d.expected_tier})`).join('\n');
+  const totalCostCents = senseState.results.reduce((sum, r) => sum + (report.TIER_PRICE_CENTS[r.agent.tier] || 0), 0);
 
   return `You are the conversational interface for a Maritime fleet control plane. You answer questions about the fleet and can request remediation for a specific agent.
 
 Current fleet state (freshly sensed, may differ from what the user last saw):
 ${fleetLines || '(no managed agents)'}
 ${missingLines ? `\nMissing agents:\n${missingLines}` : ''}
+
+Estimated total spend: $${(totalCostCents / 100).toFixed(2)}/mo (derived from tier pricing — no dedicated Maritime spend API exists).
 
 Controller mode: ${mode} ${mode !== 'enforce' ? '(dry run — remediation requests are evaluated but not executed)' : '(remediation requests may actually execute)'}.
 
