@@ -30,12 +30,14 @@ function renderRow(r) {
     : r.decision.action === 'NONE'
       ? '—'
       : r.decision.action;
+  const canStart = r.status === 'sleeping' || r.status === 'stopped';
   return `<tr>
     <td class="name-cell">${esc(r.name)}</td>
     <td class="muted">${esc(r.status)}</td>
     <td class="muted">${esc(r.tier || '—')}${r.desiredTier && r.desiredTier !== r.tier ? ` <span class="want">want ${esc(r.desiredTier)}</span>` : ''}</td>
     <td>${healthPill(r.health)}</td>
     <td class="muted">${esc(action)}</td>
+    <td>${canStart ? `<button type="button" class="start-btn" data-agent="${esc(r.name)}">Start</button>` : ''}</td>
   </tr>`;
 }
 
@@ -70,7 +72,7 @@ function renderDashboard(state) {
 
   const rows = results.length
     ? results.map(renderRow).join('\n')
-    : `<tr><td colspan="5" class="muted empty-cell">No agents to reconcile — empty fleet, or everything managed is ignored.</td></tr>`;
+    : `<tr><td colspan="6" class="muted empty-cell">No agents to reconcile — empty fleet, or everything managed is ignored.</td></tr>`;
 
   const incidentItems = results
     .filter((r) => r.health === 'INCIDENT' || r.health === 'DRIFT_MISSING' || (r.actionResult && r.actionResult.executed))
@@ -119,7 +121,7 @@ function renderDashboard(state) {
         <span class="muted">${results.length} agent${results.length === 1 ? '' : 's'}</span>
       </div>
       <table>
-        <thead><tr><th>Name</th><th>Status</th><th>Tier</th><th>Health</th><th>Action</th></tr></thead>
+        <thead><tr><th>Name</th><th>Status</th><th>Tier</th><th>Health</th><th>Action</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </section>
@@ -275,6 +277,12 @@ function page(body, ctx) {
     color: #fff; font-size: 0.85rem; font-weight: 600; cursor: pointer;
   }
   .chat-form button:disabled { opacity: 0.6; cursor: default; }
+  .start-btn {
+    padding: 0.3rem 0.7rem; border-radius: 0.5rem; border: 1px solid var(--brand);
+    background: transparent; color: var(--brand); font-size: 0.76rem; font-weight: 600; cursor: pointer;
+  }
+  .start-btn:hover:not(:disabled) { background: var(--brand); color: #fff; }
+  .start-btn:disabled { opacity: 0.5; cursor: default; }
 </style>
 </head>
 <body>
@@ -370,6 +378,37 @@ function page(body, ctx) {
             button.disabled = false;
             input.focus();
           });
+      });
+
+      document.querySelectorAll('.start-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          pauseAutoRefresh();
+          var agentName = btn.getAttribute('data-agent');
+          btn.disabled = true;
+          btn.textContent = '…';
+          fetch(apiUrl('agents/' + encodeURIComponent(agentName) + '/start'), { method: 'POST' })
+            .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+            .then(function (result) {
+              var r = result.data.result || {};
+              if (r.executed) {
+                addMessage('assistant', agentName + ': start executed, refreshing…');
+                setTimeout(function () { location.reload(); }, 1500);
+              } else if (r.skippedReason === 'RECONCILE_MODE is not enforce') {
+                addMessage('assistant error', agentName + ': would start, but RECONCILE_MODE is report (dry run) — nothing executed.');
+                btn.disabled = false;
+                btn.textContent = 'Start';
+              } else {
+                addMessage('assistant error', agentName + ': ' + (r.skippedReason || r.error || 'not started') + '.');
+                btn.disabled = false;
+                btn.textContent = 'Start';
+              }
+            })
+            .catch(function (err) {
+              addMessage('assistant error', agentName + ': request failed — ' + err.message);
+              btn.disabled = false;
+              btn.textContent = 'Start';
+            });
+        });
       });
     })();
   </script>

@@ -70,6 +70,26 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Direct "Start" button on the dashboard — a UI shortcut onto the exact
+  // same reconcile.startAgent() the chat tool calls, not a new mutation path.
+  if (req.method === 'POST' && url.pathname.startsWith('/agents/') && url.pathname.endsWith('/start')) {
+    const agentName = decodeURIComponent(url.pathname.slice('/agents/'.length, -'/start'.length));
+    try {
+      const senseState = await reconcile.senseAndClassify();
+      const target = senseState.results.find((r) => r.agent.name === agentName);
+      if (!target) {
+        sendJson(res, 404, { ok: false, error: `"${agentName}" is not a managed agent.` });
+        return;
+      }
+      const { mode } = reconcile.getConfig();
+      const result = await reconcile.startAgent(target.agent, mode);
+      sendJson(res, 200, { ok: true, result });
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: err.message });
+    }
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     const html = dashboard.renderDashboard(reconcile.getLastState());
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
