@@ -333,23 +333,61 @@ function page(body, ctx) {
 
       function sleep(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
+      function isGatewayWakeStatus(status) {
+        // 503 = Maritime's own JSON "starting or asleep" response; 502/504
+        // are the raw HTML gateway-timeout page it returns for the same
+        // underlying reason, mid-wake, with no JSON body at all.
+        return status === 502 || status === 503 || status === 504;
+      }
+
       // The controller itself runs on a sleep-when-idle tier, so the first
-      // request after a period of inactivity can hit the gateway mid-wake
-      // (503, "Agent is starting or asleep"). Retry through that instead of
-      // surfacing it as a chat failure.
+      // request after a period of inactivity can hit the gateway mid-wake.
+      // Retry through that instead of surfacing it as a failure — and don't
+      // assume the body is JSON even on a "success" status, since a wake
+      // race can still hand back an HTML error page.
       function postChatWithRetry(message, pending, attemptsLeft) {
         return fetch(apiUrl('chat'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message: message, source: 'dashboard' }),
         }).then(function (res) {
-          if (res.status === 503 && attemptsLeft > 0) {
+          if (isGatewayWakeStatus(res.status) && attemptsLeft > 0) {
             pending.textContent = 'waking up the control plane…';
             return sleep(WAKE_RETRY_DELAY_MS).then(function () {
               return postChatWithRetry(message, pending, attemptsLeft - 1);
             });
           }
           return res.text().then(function (text) { return { ok: res.ok, text: text }; });
+        });
+      }
+
+      // JSON-endpoint counterpart of postChatWithRetry, for /agents/*/start
+      // and /reconcile — retries through gateway wake hiccups (whether they
+      // show up as a JSON 503 or a bare HTML error page) and never lets a
+      // JSON.parse failure escape as an unhandled rejection.
+      function fetchJsonWithRetry(url, options, onWaiting, attemptsLeft) {
+        return fetch(url, options).then(function (res) {
+          if (isGatewayWakeStatus(res.status) && attemptsLeft > 0) {
+            if (onWaiting) onWaiting();
+            return sleep(WAKE_RETRY_DELAY_MS).then(function () {
+              return fetchJsonWithRetry(url, options, onWaiting, attemptsLeft - 1);
+            });
+          }
+          return res.text().then(function (text) {
+            var data;
+            try {
+              data = JSON.parse(text);
+            } catch (parseErr) {
+              if (attemptsLeft > 0) {
+                if (onWaiting) onWaiting();
+                return sleep(WAKE_RETRY_DELAY_MS).then(function () {
+                  return fetchJsonWithRetry(url, options, onWaiting, attemptsLeft - 1);
+                });
+              }
+              throw new Error('Got a non-JSON response (status ' + res.status + ') after retrying.');
+            }
+            return { ok: res.ok, status: res.status, data: data };
+          });
         });
       }
 
@@ -387,10 +425,11 @@ function page(body, ctx) {
       // page reload, which only re-renders the cached last state) — poll it
       // until the target agent's status actually flips to active.
       function pollUntilActive(agentName, pending, attemptsLeft, totalAttempts) {
-        return fetch(apiUrl('reconcile'), { method: 'POST' })
-          .then(function (res) { return res.json(); })
-          .then(function (state) {
-            var row = (state.results || []).find(function (r) { return r.name === agentName; });
+        return fetchJsonWithRetry(apiUrl('reconcile'), { method: 'POST' }, function () {
+          pending.textContent = agentName + ': control plane is still waking up…';
+        }, 2)
+          .then(function (result) {
+            var row = (result.data.results || []).find(function (r) { return r.name === agentName; });
             var status = row ? row.status : 'unknown';
             if (status === 'active') return { started: true, status: status };
             if (attemptsLeft <= 0) return { started: false, status: status };
@@ -407,18 +446,25 @@ function page(body, ctx) {
           var agentName = btn.getAttribute('data-agent');
           btn.disabled = true;
           btn.textContent = '…';
-          fetch(apiUrl('agents/' + encodeURIComponent(agentName) + '/start'), { method: 'POST' })
-            .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
+          var pending = addMessage('assistant pending', agentName + ': starting…');
+
+          fetchJsonWithRetry(
+            apiUrl('agents/' + encodeURIComponent(agentName) + '/start'),
+            { method: 'POST' },
+            function () { pending.textContent = agentName + ': control plane is waking up…'; },
+            WAKE_RETRY_ATTEMPTS
+          )
             .then(function (result) {
               var r = result.data.result || {};
               if (!r.executed) {
-                addMessage('assistant error', agentName + ': ' + (r.skippedReason || r.error || 'not started') + '.');
+                pending.textContent = agentName + ': ' + (r.skippedReason || r.error || 'not started') + '.';
+                pending.className = 'chat-msg assistant error';
                 btn.disabled = false;
                 btn.textContent = 'Start';
                 return;
               }
-              var pending = addMessage('assistant pending', agentName + ': start executed, waiting for it to come up…');
-              pollUntilActive(agentName, pending, START_POLL_ATTEMPTS, START_POLL_ATTEMPTS).then(function (outcome) {
+              pending.textContent = agentName + ': start executed, waiting for it to come up…';
+              return pollUntilActive(agentName, pending, START_POLL_ATTEMPTS, START_POLL_ATTEMPTS).then(function (outcome) {
                 if (outcome.started) {
                   pending.textContent = agentName + ': now active. Refreshing…';
                   pending.className = 'chat-msg assistant';
@@ -433,7 +479,8 @@ function page(body, ctx) {
               });
             })
             .catch(function (err) {
-              addMessage('assistant error', agentName + ': request failed — ' + err.message);
+              pending.textContent = agentName + ': request failed — ' + err.message;
+              pending.className = 'chat-msg assistant error';
               btn.disabled = false;
               btn.textContent = 'Start';
             });
