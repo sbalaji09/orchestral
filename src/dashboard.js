@@ -91,7 +91,7 @@ function renderDashboard(state) {
 
   const stats = [
     statCard('Agents managed', results.length),
-    statCard('Est. monthly spend', fmtCents(summary.estimatedMonthlyCostCents), summary.costNote),
+    statCard('Est. monthly spend', fmtCents(summary.estimatedMonthlyCostCents)),
     statCard('Open incidents', incidentCount, incidentCount ? null : 'All clear'),
   ].join('\n');
 
