@@ -40,7 +40,6 @@ function buildSummary(results, mode) {
     incidents,
     costLeaks,
     actionsTaken,
-    costNote: 'Estimated from tier pricing (no dedicated spend API).',
   };
 }
 
