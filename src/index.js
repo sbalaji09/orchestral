@@ -89,10 +89,14 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Always pulls fresh state before rendering — the dashboard should reflect
+  // the real fleet as it is right now, not whatever the last cron/manual
+  // pass happened to see. (/state stays a fast read of the cached snapshot,
+  // for programmatic polling that doesn't want the cost of a full sense pass.)
   if (req.method === 'GET' && url.pathname === '/') {
-    const html = dashboard.renderDashboard(reconcile.getLastState());
+    const state = await reconcile.reconcilePassSafe();
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
+    res.end(dashboard.renderDashboard(state));
     return;
   }
 
