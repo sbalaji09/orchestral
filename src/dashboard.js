@@ -380,6 +380,27 @@ function page(body, ctx) {
           });
       });
 
+      var START_POLL_ATTEMPTS = 12;
+      var START_POLL_DELAY_MS = 2500;
+
+      // POST /reconcile does a real fresh sense pass every call (unlike a
+      // page reload, which only re-renders the cached last state) — poll it
+      // until the target agent's status actually flips to active.
+      function pollUntilActive(agentName, pending, attemptsLeft, totalAttempts) {
+        return fetch(apiUrl('reconcile'), { method: 'POST' })
+          .then(function (res) { return res.json(); })
+          .then(function (state) {
+            var row = (state.results || []).find(function (r) { return r.name === agentName; });
+            var status = row ? row.status : 'unknown';
+            if (status === 'active') return { started: true, status: status };
+            if (attemptsLeft <= 0) return { started: false, status: status };
+            pending.textContent = agentName + ': waiting for it to come up… (' + status + ', check ' + (totalAttempts - attemptsLeft + 1) + '/' + totalAttempts + ')';
+            return sleep(START_POLL_DELAY_MS).then(function () {
+              return pollUntilActive(agentName, pending, attemptsLeft - 1, totalAttempts);
+            });
+          });
+      }
+
       document.querySelectorAll('.start-btn').forEach(function (btn) {
         btn.addEventListener('click', function () {
           pauseAutoRefresh();
@@ -390,14 +411,26 @@ function page(body, ctx) {
             .then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); })
             .then(function (result) {
               var r = result.data.result || {};
-              if (r.executed) {
-                addMessage('assistant', agentName + ': start executed, refreshing…');
-                setTimeout(function () { location.reload(); }, 1500);
-              } else {
+              if (!r.executed) {
                 addMessage('assistant error', agentName + ': ' + (r.skippedReason || r.error || 'not started') + '.');
                 btn.disabled = false;
                 btn.textContent = 'Start';
+                return;
               }
+              var pending = addMessage('assistant pending', agentName + ': start executed, waiting for it to come up…');
+              pollUntilActive(agentName, pending, START_POLL_ATTEMPTS, START_POLL_ATTEMPTS).then(function (outcome) {
+                if (outcome.started) {
+                  pending.textContent = agentName + ': now active. Refreshing…';
+                  pending.className = 'chat-msg assistant';
+                  setTimeout(function () { location.reload(); }, 1000);
+                } else {
+                  pending.textContent = agentName + ': still ' + outcome.status + ' after waiting — it may need more time. Refreshing to show the latest state.';
+                  pending.className = 'chat-msg assistant error';
+                  btn.disabled = false;
+                  btn.textContent = 'Start';
+                  setTimeout(function () { location.reload(); }, 1500);
+                }
+              });
             })
             .catch(function (err) {
               addMessage('assistant error', agentName + ': request failed — ' + err.message);
