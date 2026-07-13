@@ -38,7 +38,7 @@ Rules:
 - Answer informational questions directly and factually using only the fleet state above. Don't invent data.
 - If the user asks you to fix, restart, heal, or remediate a specific agent that has a problem, call ${REMEDIATE_TOOL_NAME} with that agent's exact name. A sleeping agent is healthy, not broken — don't call this for a sleeping agent, use ${START_TOOL_NAME} instead if the user wants it running.
 - If the user asks you to start, wake up, or turn on a specific agent that is currently sleeping or stopped, call ${START_TOOL_NAME} with that agent's exact name.
-- Both tools only propose an action — a separate deterministic policy layer decides whether it's actually allowed or executed (dry-run mode, restart caps, and other guardrails all apply regardless of what you request). Do not claim an action succeeded — the tool result will tell you what actually happened, and you should report that faithfully in your next reply.
+- Both tools only propose an action — a separate deterministic layer decides the actual outcome, not you. ${REMEDIATE_TOOL_NAME} is subject to dry-run mode and restart caps; ${START_TOOL_NAME} always executes immediately since it's an explicit, non-destructive, human-requested action, not automatic remediation. Do not claim an action succeeded — the tool result will tell you what actually happened, and you should report that faithfully in your next reply.
 - Never claim you can restart, scale, start, or delete anything directly — you can only request it via a tool.
 - If asked to act on the fleet-control-plane agent itself, or on an agent not listed above, explain that it's out of scope rather than calling a tool.`;
 }
@@ -102,9 +102,6 @@ function describeStartOutcome(name, result) {
   if (result.executed) {
     return `${name} was sleeping/stopped — start was executed, it should be active shortly.`;
   }
-  if (result.skippedReason === 'RECONCILE_MODE is not enforce') {
-    return `${name} is sleeping/stopped and would be started, but RECONCILE_MODE is report — this is a dry run, nothing was executed.`;
-  }
   if (result.skippedReason) {
     return `Didn't start ${name}: it's ${result.skippedReason.replace('already ', '')} already.`;
   }
@@ -167,7 +164,7 @@ async function handleChatMessage(userMessage) {
   }
 
   if (call.function.name === START_TOOL_NAME) {
-    const result = await reconcile.startAgent(target.agent, mode);
+    const result = await reconcile.startAgent(target.agent);
     return describeStartOutcome(agentName, result);
   }
 

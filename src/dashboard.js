@@ -393,10 +393,6 @@ function page(body, ctx) {
               if (r.executed) {
                 addMessage('assistant', agentName + ': start executed, refreshing…');
                 setTimeout(function () { location.reload(); }, 1500);
-              } else if (r.skippedReason === 'RECONCILE_MODE is not enforce') {
-                addMessage('assistant error', agentName + ': would start, but RECONCILE_MODE is report (dry run) — nothing executed.');
-                btn.disabled = false;
-                btn.textContent = 'Start';
               } else {
                 addMessage('assistant error', agentName + ': ' + (r.skippedReason || r.error || 'not started') + '.');
                 btn.disabled = false;

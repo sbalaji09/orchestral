@@ -124,17 +124,17 @@ async function act(agent, decision, mode) {
 
 // Explicit "start" for a sleeping/stopped agent — distinct from act() because
 // policy.decide() never proposes waking a sleeping agent automatically
-// (sleeping is deliberately healthy). This is a direct, user-requested
-// override, not an automatic remediation, but it still goes through the same
-// enforce-mode gate as every other mutation, and `agent` only ever comes from
-// sense()'s already-self-filtered list, so it can't target the controller.
-async function startAgent(agent, mode) {
+// (sleeping is deliberately healthy). RECONCILE_MODE gates the *autonomous*
+// reconcile loop from mutating anything unattended; this function is never
+// called by that loop (evaluateAndAct is), only by a direct, explicit,
+// single-target human action — a button click or a chat message. There's no
+// unattended path here for the mode gate to protect against, and starting is
+// non-destructive (it adds capacity, it doesn't stop/restart/delete
+// anything), so it always executes. `agent` only ever comes from sense()'s
+// already-self-filtered list, so it still can't target the controller.
+async function startAgent(agent) {
   if (agent.status !== 'sleeping' && agent.status !== 'stopped') {
     return { executed: false, action: 'START', skippedReason: `already ${agent.status}` };
-  }
-
-  if (mode !== 'enforce') {
-    return { executed: false, action: 'START', skippedReason: 'RECONCILE_MODE is not enforce' };
   }
 
   try {

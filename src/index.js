@@ -81,8 +81,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { ok: false, error: `"${agentName}" is not a managed agent.` });
         return;
       }
-      const { mode } = reconcile.getConfig();
-      const result = await reconcile.startAgent(target.agent, mode);
+      const result = await reconcile.startAgent(target.agent);
       sendJson(res, 200, { ok: true, result });
     } catch (err) {
       sendJson(res, 500, { ok: false, error: err.message });
