@@ -299,9 +299,14 @@ function page(body, ctx) {
   </main>
   <script>
     (function () {
+      // Temporarily disabled for the demo — GET / now does a full live
+      // reconcile pass on every load, so a 30s auto-reload was re-triggering
+      // that (and any enforce-mode actions) in the background. Re-enable by
+      // restoring the setTimeout below.
+      var AUTO_REFRESH_ENABLED = false;
       var REFRESH_MS = 30000;
-      var refreshTimer = setTimeout(function () { location.reload(); }, REFRESH_MS);
-      function pauseAutoRefresh() { clearTimeout(refreshTimer); }
+      var refreshTimer = AUTO_REFRESH_ENABLED ? setTimeout(function () { location.reload(); }, REFRESH_MS) : null;
+      function pauseAutoRefresh() { if (refreshTimer) clearTimeout(refreshTimer); }
 
       var form = document.getElementById('chat-form');
       if (!form) return;
